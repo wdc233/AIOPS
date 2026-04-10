@@ -281,6 +281,8 @@ async def get_db_manager() -> DatabaseManager:
     global _db_manager
     if _db_manager is None:
         settings = get_settings()
+        if not settings.database.enabled:
+            raise RuntimeError("Database is disabled. Set DATABASE__ENABLED=true to enable.")
         _db_manager = DatabaseManager(
             connection_string=settings.database.connection_string,
             pool_size=settings.database.pool_size,

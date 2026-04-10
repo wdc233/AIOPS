@@ -15,6 +15,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class DatabaseSettings(BaseSettings):
     """Database configuration."""
 
+    enabled: bool = Field(default=True, description="Enable database connection")
     host: str = Field(default="localhost", description="StarRocks host")
     port: int = Field(default=9030, description="StarRocks port")
     user: str = Field(default="root", description="StarRocks user")

@@ -58,10 +58,13 @@ class AIOPSAgent:
         logger.info("Starting AIOPS Agent...")
         self._running = True
 
-        # Initialize database
-        from src.db import get_db_manager
-        db = await get_db_manager()
-        logger.info("Database initialized")
+        # Initialize database (optional, can be disabled for local API-only testing)
+        if self._settings.database.enabled:
+            from src.db import get_db_manager
+            db = await get_db_manager()
+            logger.info("Database initialized")
+        else:
+            logger.info("Database disabled, skipping initialization")
 
         # Initialize environment
         from src.environment import initialize_environment
@@ -128,9 +131,10 @@ class AIOPSAgent:
         # Uvicorn doesn't have a clean shutdown from external, but the daemon thread will exit with the process
         logger.info("API server will stop with the process")
 
-        # Close database
-        from src.db import close_db_manager
-        await close_db_manager()
+        # Close database (only if enabled)
+        if self._settings.database.enabled:
+            from src.db import close_db_manager
+            await close_db_manager()
 
         self._running = False
         logger.info("AIOPS Agent stopped")
