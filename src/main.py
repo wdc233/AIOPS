@@ -68,7 +68,8 @@ class AIOPSAgent:
 
         # Initialize environment
         from src.environment import initialize_environment
-        await initialize_environment()
+        config_path = self._settings.cluster_config_path
+        await initialize_environment(config_path)
         logger.info("Environment initialized")
 
         # Initialize tools

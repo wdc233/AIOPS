@@ -1,0 +1,36 @@
+{
+  "clusters": [
+    {
+      "cluster_name": "test-cluster",
+      "cluster_type": "vm",
+      "servers": [
+        {
+          "ip": "192.168.1.100",
+          "port": 22,
+          "username": "root",
+          "password": null,
+          "private_key": null,
+          "os_type": "linux",
+          "role": ["web"],
+          "cluster_name": "test-cluster",
+          "labels": {"env": "test"}
+        },
+        {
+          "ip": "192.168.1.101",
+          "port": 22,
+          "username": "root",
+          "password": null,
+          "private_key": null,
+          "os_type": "linux",
+          "role": ["db"],
+          "cluster_name": "test-cluster",
+          "labels": {"env": "test"}
+        }
+      ],
+      "prometheus_url": "http://localhost:9090",
+      "grafana_url": "http://localhost:3000",
+      "labels": {"env": "test"},
+      "description": "Test cluster for local development"
+    }
+  ]
+}

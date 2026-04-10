@@ -131,6 +131,12 @@ class Settings(BaseSettings):
     # Environment file path
     env_file_path: Optional[str] = Field(None, description="Custom env file path")
 
+    # Cluster config file path (for loading cluster/server info without database)
+    cluster_config_path: Optional[str] = Field(
+        None,
+        description="Path to cluster config JSON file",
+    )
+
     def __init__(self, **data: Any) -> None:
         super().__init__(**data)
         # Support custom env file path
