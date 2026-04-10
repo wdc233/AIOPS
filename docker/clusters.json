@@ -1,0 +1,13 @@
+{
+  "clusters": [
+    {
+      "cluster_name": "default-cluster",
+      "cluster_type": "vm",
+      "servers": [],
+      "prometheus_url": "http://prometheus:9090",
+      "grafana_url": "http://grafana:3000",
+      "labels": {},
+      "description": "Default cluster configuration"
+    }
+  ]
+}

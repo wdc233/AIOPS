@@ -1,0 +1,123 @@
+version: '3.8'
+
+services:
+  # StarRocks database
+  starrocks:
+    image: starrocks/fe-ubuntu:3.2-latest
+    container_name: aiops-starrocks
+    hostname: starrocks-fe
+    ports:
+      - "9030:9030"  # MySQL protocol
+      - "8030:8030"  # HTTP
+    environment:
+      - FE_CONF_http_port=8030
+      - FE_CONF_query_port=9030
+      - FE_CONF_edit_log_port=9010
+    volumes:
+      - starrocks_data:/opt/starrocks/fe/meta
+    healthcheck:
+      test: ["CMD", "mysql", "-h", "localhost", "-P", "9030", "-uroot", "-e", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aiops-network
+
+  # StarRocks BE (optional for simple setup)
+  starrocks-be:
+    image: starrocks/be-ubuntu:3.2-latest
+    container_name: aiops-starrocks-be
+    hostname: starrocks-be
+    ports:
+      - "8040:8040"
+    environment:
+      - BE_CONF_be_port=9050
+      - BE_CONF_webserver_port=8040
+      - BE_CONF_heartbeat_service_port=9050
+      - BE_CONF_storage_root_path=/opt/starrocks/be/storage
+    depends_on:
+      - starrocks
+    volumes:
+      - starrocks_be_data:/opt/starrocks/be/storage
+    networks:
+      - aiops-network
+
+  # Prometheus (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: aiops-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - aiops-network
+
+  # Grafana (optional)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: aiops-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - aiops-network
+
+  # AIOPS Agent
+  aiops-agent:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: aiops-agent
+    ports:
+      - "8765:8765"
+    environment:
+      - DATABASE__HOST=starrocks
+      - DATABASE__PORT=9030
+      - DATABASE__USER=root
+      - DATABASE__PASSWORD=
+      - DATABASE__DATABASE=aiops
+      - LLM__PROVIDER=openai
+      - LLM__API_KEY=${OPENAI_API_KEY:-}
+      - LLM__MODEL=gpt-4
+      - PROMETHEUS__URL=http://prometheus:9090
+      - GRAFANA__URL=http://grafana:3000
+      - GRAFANA__API_KEY=${GRAFANA_API_KEY:-}
+      - WEBSOCKET__HOST=0.0.0.0
+      - WEBSOCKET__PORT=8765
+      - SCHEDULER__HEARTBEAT_INTERVAL=1800
+      - SCHEDULER__CRON_ENABLED=true
+      - AGENT__AGENT_ID=aiops-agent-001
+      - AGENT__LOG_LEVEL=INFO
+    depends_on:
+      starrocks:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
+    volumes:
+      - ./clusters.json:/app/clusters.json:ro
+    networks:
+      - aiops-network
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+networks:
+  aiops-network:
+    driver: bridge
+
+volumes:
+  starrocks_data:
+  starrocks_be_data:
+  prometheus_data:
+  grafana_data:
