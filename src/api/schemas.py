@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 class IntentTypeEnum(str, Enum):
     """Intent type enum."""
 
+    QUERY_INFO = "query_info"
     QUERY_METRIC = "query_metric"
     CHECK_STATUS = "check_status"
     RUN_INSPECTION = "run_inspection"

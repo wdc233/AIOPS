@@ -84,6 +84,29 @@ FastAPI runs in the same process as the existing agent. Uvicorn starts in a subt
 - **Intent Recognition Agent**: Independent StateGraph with nodes: intent_parse → slot_check → tool_select → confirm
 - **Memory**: ConversationBufferMemory for user sessions, inspection tasks use isolated sessions
 
+### Intent Recognition System
+
+**Intent Types**:
+- `CHAT`: User greetings/identity questions - direct LLM response, no tool call
+- `INSPECT_CLUSTER`: Cluster inspection - tools: ssh_command + log_analysis
+- `QUERY_METRIC`: Metric query - tools: ssh_command + prometheus_query
+- `PREDICT_RISK`: Risk prediction - tools: trend_prediction
+- `QUERY_INFO`: Cluster/server info query - tools: environment_query
+
+**Confidence-Based Execution**:
+- ≥ 0.9: Execute directly without confirmation
+- 0.7 - 0.9: Execute after user confirmation
+- 0.5 - 0.7: Present multiple intent options for user selection
+- < 0.5: Fallback response with suggestions
+
+**Strategy Templates**:
+- Response templates are pre-defined in configuration (not LLM-generated)
+- Each intent type has corresponding template for confirmation and result messages
+- Slot filling follows: user input → cluster.json lookup → follow-up question
+
+**Fallback Response**:
+- "我好像没有理解您的需求。您可以尝试这样说：'检查 prod-cluster 的健康状况'、'查看 CPU 使用率' 或 '预测磁盘容量风险'。"
+
 ## Required Tools
 
 - `SSHCommandTool`: Execute commands on remote servers
@@ -99,8 +122,11 @@ FastAPI runs in the same process as the existing agent. Uvicorn starts in a subt
 Key Pydantic models defined in requirements:
 - `InspectionCommand`: Inspection task command with schedule/run_now/cancel/update actions
 - `UserIntent`: User interaction intent with slot filling (target_cluster, target_ip, metric_name, etc.)
-- `ClusterInfo` / `ServerInfo`: Global environment information
+- `ClusterInfo`: Global environment information (cluster_name, cluster_type, env, servers)
+- `ServerInfo`: Server information (ip, port, username, password, cluster_name)
 - `AuditLog`: Full链路 operation records
+
+**Note**: cluster_type and env are flexible strings (es, starrocks, cdh, gaussdb, tbds for cluster_type; dev, sit, uat, prd for env). ServerInfo no longer contains role/labels/os_type/private_key.
 
 ## Technical Requirements
 

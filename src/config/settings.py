@@ -138,10 +138,11 @@ class Settings(BaseSettings):
     )
 
     def __init__(self, **data: Any) -> None:
+        # Support custom env file path before base init reads it
+        env_file_path = data.get("env_file_path")
+        if env_file_path and os.path.exists(env_file_path):
+            data["env_file"] = env_file_path
         super().__init__(**data)
-        # Support custom env file path
-        if self.env_file_path and os.path.exists(self.env_file_path):
-            self.model_config["env_file"] = self.env_file_path
 
     def reload(self) -> None:
         """Reload settings from environment variables."""
@@ -158,13 +159,12 @@ def get_settings() -> Settings:
 def load_clusters_from_file(file_path: Union[str, Path]) -> Dict[str, Any]:
     """Load cluster configuration from JSON/YAML file."""
     path = Path(file_path)
-    if not path.exists():
-        return {}
-
-    with open(path, "r", encoding="utf-8") as f:
-        if path.suffix == ".json":
-            return json.load(f)
-        # Add YAML support if needed
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            if path.suffix == ".json":
+                return json.load(f)
+            return {}
+    except FileNotFoundError:
         return {}
 
 

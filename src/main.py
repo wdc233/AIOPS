@@ -58,7 +58,6 @@ class AIOPSAgent:
         logger.info("Starting AIOPS Agent...")
         self._running = True
 
-        # Initialize database (optional, can be disabled for local API-only testing)
         if self._settings.database.enabled:
             from src.db import get_db_manager
             db = await get_db_manager()

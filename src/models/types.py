@@ -34,24 +34,15 @@ class SessionType(str, Enum):
     PERSISTENT = "persistent"
 
 
-class ClusterType(str, Enum):
-    """Cluster type."""
-
-    K8S = "k8s"
-    VM = "vm"
-    BARE_METAL = "baremetal"
-
-
-class OSType(str, Enum):
-    """Operating system type."""
-
-    LINUX = "linux"
-    WINDOWS = "windows"
+# Cluster type and environment type are flexible strings
+# ClusterType examples: es, starrocks, cdh, gaussdb, tbds, etc.
+# EnvironmentType examples: dev, sit, uat, prd
 
 
 class IntentType(str, Enum):
     """User intent types."""
 
+    QUERY_INFO = "query_info"
     QUERY_METRIC = "query_metric"
     CHECK_STATUS = "check_status"
     RUN_INSPECTION = "run_inspection"
@@ -133,31 +124,20 @@ class UserIntent(BaseModel):
 class ServerInfo(BaseModel):
     """Server information model."""
 
-    ip: str = Field(..., description="Server IP address")
+    ip: str = Field(..., description="Server IP address or domain")
     port: int = Field(default=22, description="SSH port")
     username: str = Field(..., description="SSH username")
     password: Optional[str] = Field(None, description="SSH password (encrypted)")
-    private_key: Optional[str] = Field(None, description="SSH private key path")
-    os_type: OSType = Field(default=OSType.LINUX, description="Operating system type")
-    role: List[str] = Field(default_factory=list, description="Server roles: web, db, cache, etc.")
     cluster_name: str = Field(..., description="Cluster name this server belongs to")
-    labels: Dict[str, str] = Field(default_factory=dict, description="Custom labels")
-
-    model_config = {"use_enum_values": True}
 
 
 class ClusterInfo(BaseModel):
     """Cluster information model."""
 
     cluster_name: str = Field(..., description="Cluster name")
-    cluster_type: ClusterType = Field(..., description="Cluster type")
+    cluster_type: str = Field(..., description="Cluster type: es, starrocks, cdh, gaussdb, tbds, etc.")
+    env: str = Field(..., description="Environment: dev, sit, uat, prd")
     servers: List[ServerInfo] = Field(default_factory=list, description="Servers in this cluster")
-    prometheus_url: Optional[str] = Field(None, description="Prometheus URL")
-    grafana_url: Optional[str] = Field(None, description="Grafana URL")
-    labels: Dict[str, str] = Field(default_factory=dict, description="Custom labels")
-    description: Optional[str] = Field(None, description="Cluster description")
-
-    model_config = {"use_enum_values": True}
 
 
 # --- Audit Models ---

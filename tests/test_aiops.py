@@ -12,8 +12,6 @@ from src.models.types import (
     UserIntent,
     ClusterInfo,
     ServerInfo,
-    ClusterType,
-    OSType,
 )
 
 
@@ -60,24 +58,22 @@ class TestModels:
         """Test creating cluster info."""
         cluster = ClusterInfo(
             cluster_name="prod-cluster",
-            cluster_type=ClusterType.K8S,
+            cluster_type="starrocks",
+            env="prd",
             servers=[
                 ServerInfo(
                     ip="192.168.1.1",
                     port=22,
                     username="admin",
                     password="password",
-                    os_type=OSType.LINUX,
-                    role=["web", "api"],
                     cluster_name="prod-cluster",
                 ),
             ],
-            prometheus_url="http://prometheus:9090",
-            grafana_url="http://grafana:3000",
         )
 
         assert cluster.cluster_name == "prod-cluster"
-        assert cluster.cluster_type == ClusterType.K8S
+        assert cluster.cluster_type == "starrocks"
+        assert cluster.env == "prd"
         assert len(cluster.servers) == 1
         assert cluster.servers[0].ip == "192.168.1.1"
 

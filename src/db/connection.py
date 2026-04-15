@@ -79,6 +79,11 @@ class DatabaseManager:
         self._initialized = True
         await self._create_tables()
 
+    async def _ensure_initialized(self) -> None:
+        """Ensure database is initialized."""
+        if not self._initialized:
+            await self.initialize()
+
     async def _create_tables(self) -> None:
         """Create required tables if not exist."""
         await self.execute_sql(COMMANDS_TABLE_SQL)
@@ -115,8 +120,7 @@ class DatabaseManager:
 
     async def execute_sql(self, sql: str, params: Optional[Dict[str, Any]] = None) -> Any:
         """Execute raw SQL."""
-        if not self._initialized:
-            await self.initialize()
+        await self._ensure_initialized()
 
         if self._engine:
             async with self._engine.connect() as conn:
@@ -133,8 +137,7 @@ class DatabaseManager:
 
     async def fetch_one(self, sql: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """Fetch one row."""
-        if not self._initialized:
-            await self.initialize()
+        await self._ensure_initialized()
 
         if self._engine:
             async with self._engine.connect() as conn:
@@ -154,8 +157,7 @@ class DatabaseManager:
 
     async def fetch_all(self, sql: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Fetch all rows."""
-        if not self._initialized:
-            await self.initialize()
+        await self._ensure_initialized()
 
         if self._engine:
             async with self._engine.connect() as conn:
@@ -171,8 +173,7 @@ class DatabaseManager:
 
     async def execute_many(self, sql: str, params_list: List[Dict[str, Any]]) -> None:
         """Execute batch SQL."""
-        if not self._initialized:
-            await self.initialize()
+        await self._ensure_initialized()
 
         if self._engine:
             async with self._engine.connect() as conn:

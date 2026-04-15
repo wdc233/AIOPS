@@ -29,24 +29,12 @@ class EnvironmentQueryTool(BaseTool):
             "properties": {
                 "query_type": {
                     "type": "string",
-                    "description": "Type of query: cluster, server, role, label",
-                    "enum": ["cluster", "server", "role", "label", "all"],
+                    "description": "Type of query: cluster, server, all",
+                    "enum": ["cluster", "server", "all"],
                 },
                 "name": {
                     "type": "string",
                     "description": "Cluster name or server IP",
-                },
-                "role": {
-                    "type": "string",
-                    "description": "Server role (e.g., web, db, cache)",
-                },
-                "label_key": {
-                    "type": "string",
-                    "description": "Label key for filtering",
-                },
-                "label_value": {
-                    "type": "string",
-                    "description": "Label value for filtering",
                 },
             },
             "required": ["query_type"],
@@ -56,18 +44,12 @@ class EnvironmentQueryTool(BaseTool):
         self,
         query_type: str,
         name: Optional[str] = None,
-        role: Optional[str] = None,
-        label_key: Optional[str] = None,
-        label_value: Optional[str] = None,
     ) -> ToolResult:
         """Query environment information.
 
         Args:
-            query_type: Type of query (cluster, server, role, label, all)
+            query_type: Type of query (cluster, server, all)
             name: Cluster name or server IP
-            role: Server role
-            label_key: Label key
-            label_value: Label value
 
         Returns:
             ToolResult with query results
@@ -96,20 +78,6 @@ class EnvironmentQueryTool(BaseTool):
                     for c in clusters:
                         servers.extend([s.model_dump() for s in c.servers])
                     result_data = servers
-
-            elif query_type == "role":
-                if role:
-                    servers = self._env_manager.get_servers_by_role(role)
-                    result_data = [s.model_dump() for s in servers]
-                else:
-                    result_data = {"error": "role parameter required"}
-
-            elif query_type == "label":
-                if label_key and label_value:
-                    servers = self._env_manager.find_servers_by_label(label_key, label_value)
-                    result_data = [s.model_dump() for s in servers]
-                else:
-                    result_data = {"error": "label_key and label_value required"}
 
             elif query_type == "all":
                 clusters = self._env_manager.get_all_clusters()

@@ -103,24 +103,38 @@ class IntentRecognitionAgent:
             return state
 
         # Use LLM to parse intent
-        system_prompt = """You are an intent recognition system for an AIOPS agent.
-Your task is to parse user input and identify:
-1. Intent type: query_metric, check_status, run_inspection, or unknown
-2. Target cluster (optional)
-3. Target IP/server (optional)
-4. Metric name (optional)
-5. Time range (optional)
+        system_prompt = """You are an intelligent intent recognition system for an AIOPS agent.
+
+Your task is to parse user input (in any language) and identify:
+1. Intent type
+2. Target information
+3. Any specific metrics or parameters mentioned
+
+Intent types:
+- query_info: User wants to query cluster/server information (how many servers, server details, etc.)
+- query_metric: User wants to query Prometheus metrics (CPU, memory, disk, network usage, etc.)
+- check_status: User wants to check server/service status
+- run_inspection: User wants to run a system inspection task
+- unknown: Cannot determine intent
 
 Respond with a JSON object containing:
-- intent_type: one of query_metric, check_status, run_inspection, unknown
-- target_cluster: cluster name if mentioned
-- target_ip: server IP if mentioned
+- intent_type: one of query_info, query_metric, check_status, run_inspection, unknown
+- target_cluster: cluster name if explicitly mentioned (e.g., "test-cluster" from "test-cluster有几台服务器")
+- target_ip: server IP if explicitly mentioned
 - metric_name: metric name if mentioned (cpu, memory, disk, network, etc.)
 - time_range: time range if mentioned (1h, 24h, 7d, etc.)
 - confidence: confidence score 0-1
+- reasoning: brief explanation of why this intent was chosen
 
-Examples:
-- "查看 CPU" -> {"intent_type": "query_metric", "metric_name": "cpu", "confidence": 0.9}
+IMPORTANT:
+- "有几台服务器" / "how many servers" / "多少台" -> query_info
+- "查看状态" / "check status" -> check_status
+- "查看指标" / "查看CPU" / "查看内存" -> query_metric
+- "运行巡检" / "执行检查" -> run_inspection
+
+Examples (note: Chinese input examples):
+- "test-cluster有几台服务器" -> {"intent_type": "query_info", "target_cluster": "test-cluster", "confidence": 0.95, "reasoning": "用户查询集群有多少台服务器"}
+- "查看 CPU 使用率" -> {"intent_type": "query_metric", "metric_name": "cpu_usage", "confidence": 0.9}
 - "检查 192.168.1.1 状态" -> {"intent_type": "check_status", "target_ip": "192.168.1.1", "confidence": 0.95}
 - "运行巡检" -> {"intent_type": "run_inspection", "confidence": 0.8}"""
 
@@ -133,12 +147,21 @@ Examples:
             import json
             import re
 
+            # Debug: log raw LLM response
+            logger.info(f"LLM raw response: {response.content}")
+
             # Extract JSON from response
             json_match = re.search(r"\{.*\}", response.content, re.DOTALL)
             if json_match:
                 parsed = json.loads(json_match.group())
+                logger.info(f"LLM parsed JSON: {parsed}")
+                intent_type_str = parsed.get("intent_type", "unknown")
+                try:
+                    intent_type = IntentType(intent_type_str)
+                except ValueError:
+                    intent_type = IntentType.UNKNOWN
                 intent = UserIntent(
-                    intent_type=parsed.get("intent_type", "unknown"),
+                    intent_type=intent_type,
                     target_cluster=parsed.get("target_cluster"),
                     target_ip=parsed.get("target_ip"),
                     metric_name=parsed.get("metric_name"),
@@ -169,7 +192,12 @@ Examples:
         missing = []
 
         # Check required slots based on intent type
-        if intent.intent_type == IntentType.QUERY_METRIC:
+        if intent.intent_type == IntentType.QUERY_INFO:
+            # Query info needs either cluster or ip
+            if not intent.target_cluster and not intent.target_ip:
+                missing.append("target")
+
+        elif intent.intent_type == IntentType.QUERY_METRIC:
             if not intent.metric_name:
                 missing.append("metric_name")
             # Try to get default cluster if not specified
@@ -207,7 +235,10 @@ Examples:
         tools = []
 
         # Select tools based on intent type
-        if intent.intent_type == IntentType.QUERY_METRIC:
+        if intent.intent_type == IntentType.QUERY_INFO:
+            tools.append("environment_query")
+
+        elif intent.intent_type == IntentType.QUERY_METRIC:
             tools.append("prometheus_query")
             if intent.metric_name in ("cpu", "memory", "disk"):
                 tools.append("trend_prediction")
@@ -254,7 +285,12 @@ Examples:
             intent = state.get("intent")
             if intent:
                 confirm_msg = f"好的，我将"
-                if intent.intent_type == IntentType.QUERY_METRIC:
+                if intent.intent_type == IntentType.QUERY_INFO:
+                    if intent.target_cluster:
+                        confirm_msg += f"查询集群 {intent.target_cluster} 的信息"
+                    elif intent.target_ip:
+                        confirm_msg += f"查询服务器 {intent.target_ip} 的信息"
+                elif intent.intent_type == IntentType.QUERY_METRIC:
                     confirm_msg += f"查询 {intent.metric_name} 指标"
                     if intent.time_range:
                         confirm_msg += f"，时间范围 {intent.time_range}"
