@@ -7,12 +7,12 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from src.agent.intent_agent import IntentRecognitionAgent, get_intent_agent
 from src.agent.main_agent import MainAgent, get_main_agent
 from src.environment.manager import get_environment_manager
-from src.models.types import UserIntent
+from src.models.types import CommandAction, InspectionCommand, InspectionItem, UserIntent
 from src.tools.prometheus import PrometheusQueryTool
 
 logger = logging.getLogger(__name__)
@@ -119,6 +119,72 @@ class APIService:
     def get_prometheus_tool(self) -> PrometheusQueryTool:
         """Get Prometheus query tool."""
         return PrometheusQueryTool()
+
+    async def run_inspection(self, targets: List[str], cluster_name: Optional[str] = None) -> Dict[str, Any]:
+        """Run inspection on specified targets.
+
+        Args:
+            targets: List of target server IPs
+            cluster_name: Optional cluster name for reporting
+
+        Returns:
+            Inspection result dictionary
+        """
+        main_agent = self.get_main_agent()
+        env_manager = self.get_environment_manager()
+
+        # Build inspection items
+        inspection_items = [
+            InspectionItem(check_type="cpu", description="CPU usage check"),
+            InspectionItem(check_type="memory", description="Memory usage check"),
+            InspectionItem(check_type="disk", description="Disk usage check"),
+            InspectionItem(check_type="network", description="Network I/O check"),
+            InspectionItem(check_type="prometheus", description="Prometheus service metrics check"),
+        ]
+
+        # Create inspection command
+        command = InspectionCommand(
+            command_id=f"chat-inspection-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            action=CommandAction.RUN_NOW,
+            name=f"Chat Inspection - {cluster_name or 'direct'}",
+            targets=targets,
+            inspection_items=inspection_items,
+            created_by="user",
+        )
+
+        try:
+            result = await main_agent.execute_inspection(command)
+            logger.info(f"execute_inspection returned: {type(result)} - {result}")
+            if result is None:
+                logger.error("execute_inspection returned None")
+                return {
+                    "success": False,
+                    "error": "Inspection returned no result",
+                    "cluster": cluster_name,
+                }
+            if not isinstance(result, dict):
+                logger.error(f"execute_inspection returned non-dict: {type(result)}")
+                return {
+                    "success": False,
+                    "error": f"Inspection returned unexpected type: {type(result).__name__}",
+                    "cluster": cluster_name,
+                }
+            return {
+                "success": True,
+                "cluster": cluster_name,
+                "inspection_id": command.command_id,
+                "results": result.get("results", []),
+                "status": result.get("status", "completed"),
+            }
+        except Exception as e:
+            logger.error(f"Inspection execution failed: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return {
+                "success": False,
+                "error": str(e),
+                "cluster": cluster_name,
+            }
 
 
 # Global API service

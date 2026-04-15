@@ -4,6 +4,7 @@
       "cluster_name": "test-cluster",
       "cluster_type": "starrocks",
       "env": "dev",
+      "prometheus_url": "http://prometheus-server:9090",
       "servers": [
         {
           "ip": "192.168.1.100",

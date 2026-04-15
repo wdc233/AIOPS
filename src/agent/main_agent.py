@@ -47,6 +47,7 @@ class MainAgent:
         self._lane_lock = get_lane_lock()
         self._tools = get_all_tools()
         self._llm = None
+        self._graph = None
 
     def _get_llm(self):
         """Lazy initialization of LLM."""
@@ -109,39 +110,67 @@ class MainAgent:
 
         observations = []
         target = state.get("target")
+        command = state.get("command")
         inspection_items = state.get("inspection_items", [])
 
         if not target or not inspection_items:
             return state
 
+        # Get prometheus_url from cluster if available
+        prometheus_url = None
+        if command and hasattr(command, 'targets') and command.targets:
+            # Try to find the cluster for this target
+            from src.environment.manager import get_environment_manager
+            env_manager = get_environment_manager()
+            # Search for target in clusters
+            for cluster in env_manager.get_all_clusters():
+                for server in cluster.servers:
+                    if server.ip == target:
+                        prometheus_url = cluster.prometheus_url
+                        break
+                if prometheus_url:
+                    break
+
+        # SSH system commands
+        ssh_commands = {
+            "cpu": "top -bn1 | grep 'Cpu(s)' | awk '{print $2}' | cut -d'%' -f1",
+            "memory": "free -m | awk 'NR==2{printf \"%.2f\", $3*100/$2 }'",
+            "disk": "df -h | awk '$NF==\"/\"{print $5}' | cut -d'%' -f1",
+            "network": "cat /proc/net/dev | awk 'NR>2{sum+=$10} END{print sum/1024/1024}'",
+        }
+
         # Collect observations for each inspection item
         for item in inspection_items:
+            check_type = item.check_type
             observation = {
-                "check_type": item.check_type,
+                "check_type": check_type,
                 "target": target,
                 "data": None,
             }
 
-            # Use appropriate tool based on check_type
-            if item.check_type == "cpu" or item.check_type == "memory" or item.check_type == "disk":
-                # Get system metrics via SSH
+            # SSH-based system metrics
+            if check_type in ssh_commands:
                 from src.tools.ssh import SSHCommandTool
-
                 ssh_tool = SSHCommandTool()
-                if item.check_type == "cpu":
-                    cmd = "top -bn1 | grep 'Cpu(s)' | awk '{print $2}' | cut -d'%' -f1"
-                elif item.check_type == "memory":
-                    cmd = "free -m | awk 'NR==2{printf \"%.2f\", $3*100/$2 }'"
-                elif item.check_type == "disk":
-                    cmd = "df -h | awk '$NF==\"/\"{print $5}' | cut -d'%' -f1"
-
+                cmd = ssh_commands[check_type]
                 result = await ssh_tool.execute(host=target, command=cmd)
-                observation["data"] = result.to_dict() if result else {"error": "No result"}
+                observation["data"] = result.to_dict() if result else None
 
-            elif item.check_type == "log":
-                # Analyze logs
+            # Prometheus service metrics - query all metrics for this IP
+            elif check_type == "prometheus":
+                if prometheus_url:
+                    from src.tools.prometheus import PrometheusQueryTool
+                    prom_tool = PrometheusQueryTool(url=prometheus_url)
+                    # Query all metrics for this IP using regex to match all ports
+                    query = f'{{instance=~"{target}:.*"}}'
+                    result = await prom_tool.execute(query=query)
+                    observation["data"] = result.to_dict() if result else None
+                else:
+                    observation["data"] = {"error": "No Prometheus URL configured for this cluster"}
+
+            # Log analysis
+            elif check_type == "log":
                 from src.tools.log_analysis import LogAnalysisTool
-
                 log_tool = LogAnalysisTool()
                 result = await log_tool.execute(
                     host=target,
@@ -149,16 +178,7 @@ class MainAgent:
                     lines=100,
                     detect_anomalies=True,
                 )
-                observation["data"] = result.to_dict() if result else {"error": "No result"}
-
-            elif item.check_type == "metric":
-                # Query Prometheus
-                from src.tools.prometheus import PrometheusQueryTool
-
-                prom_tool = PrometheusQueryTool()
-                metric_query = item.target_metric or "up"
-                result = await prom_tool.execute(query=f'{metric_query}{{instance="{target}"}}')
-                observation["data"] = result.to_dict() if result else {"error": "No result"}
+                observation["data"] = result.to_dict() if result else None
 
             observations.append(observation)
 
@@ -176,12 +196,20 @@ class MainAgent:
         analysis = {}
         for obs in observations:
             check_type = obs.get("check_type")
-            data = obs.get("data", {})
+            obs_data = obs.get("data")
+
+            # Handle None data (SSH failed)
+            if obs_data is None:
+                analysis[check_type] = {"value": None, "status": "error", "error": "Connection failed"}
+                continue
 
             # Simple analysis based on check type
-            if check_type in ("cpu", "memory", "disk"):
-                # Parse metric value
-                value = data.get("data", {}).get("stdout", "").strip()
+            if check_type in ("cpu", "memory", "disk", "network"):
+                # Parse metric value - use safe access
+                inner_data = obs_data.get("data") if isinstance(obs_data, dict) else None
+                value = ""
+                if isinstance(inner_data, dict):
+                    value = inner_data.get("stdout", "").strip()
                 try:
                     value = float(value)
                     analysis[check_type] = {
@@ -191,9 +219,32 @@ class MainAgent:
                 except ValueError:
                     analysis[check_type] = {"value": value, "status": "unknown"}
 
+            elif check_type == "prometheus":
+                # Prometheus returns all metrics for this IP
+                # Extract metric names and their latest values
+                prom_data = obs_data.get("data", {}) if isinstance(obs_data, dict) else {}
+                metric_results = prom_data.get("result", []) if isinstance(prom_data, dict) else []
+                metrics_summary = []
+                metric_count = 0
+                for metric_result in metric_results:
+                    metric_name = metric_result.get("metric", {}).get("__name__", "unknown")
+                    value_list = metric_result.get("value", [])
+                    if len(value_list) >= 2:
+                        metric_count += 1
+                        metrics_summary.append({
+                            "name": metric_name,
+                            "value": value_list[1],
+                        })
+                analysis["prometheus"] = {
+                    "status": "ok",
+                    "metric_count": metric_count,
+                    "metrics": metrics_summary[:10],  # First 10 for summary
+                    "data": obs_data,
+                }
+
             elif check_type == "log":
                 # Analyze log anomalies
-                summary = data.get("data", {}).get("summary", {})
+                summary = obs_data.get("data", {}).get("summary", {}) if isinstance(obs_data, dict) else {}
                 analysis["log"] = {
                     "total_lines": summary.get("total_lines", 0),
                     "error_count": summary.get("error_count", 0),
@@ -204,7 +255,7 @@ class MainAgent:
             elif check_type == "metric":
                 analysis["metric"] = {
                     "status": "ok",
-                    "data": data,
+                    "data": obs_data,
                 }
 
         state["analysis"] = analysis

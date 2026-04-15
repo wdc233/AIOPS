@@ -105,38 +105,48 @@ class IntentRecognitionAgent:
         # Use LLM to parse intent
         system_prompt = """You are an intelligent intent recognition system for an AIOPS agent.
 
-Your task is to parse user input (in any language) and identify:
+Your task is to parse user input (in any language, especially Chinese) and identify:
 1. Intent type
 2. Target information
 3. Any specific metrics or parameters mentioned
 
 Intent types:
-- query_info: User wants to query cluster/server information (how many servers, server details, etc.)
-- query_metric: User wants to query Prometheus metrics (CPU, memory, disk, network usage, etc.)
-- check_status: User wants to check server/service status
-- run_inspection: User wants to run a system inspection task
-- unknown: Cannot determine intent
+- chat: User greetings, identity questions, casual conversation ONLY about the agent itself ("你是谁", "你好", "谢谢", "你能做什么"). NOT for general knowledge questions.
+- query_info: User wants to query cluster/server information ("有几台服务器", "什么配置", "服务器列表")
+- query_metric: User wants to query metrics like CPU, memory, disk, network ("查看CPU", "内存使用率", "磁盘IO")
+- check_status: User wants to check server/service status ("检查状态", "运行正常吗", "健康状况")
+- run_inspection: User wants to run inspection tasks ("运行巡检", "执行检查", "巡检一下")
+- predict_risk: User wants risk prediction ("会不会满", "有风险吗", "容量预测")
+- unknown: General knowledge questions, questions not related to AIOPS operations, or cannot determine intent ("XX是什么", "XXX是什么意思", "介绍一下XXX")
 
 Respond with a JSON object containing:
-- intent_type: one of query_info, query_metric, check_status, run_inspection, unknown
-- target_cluster: cluster name if explicitly mentioned (e.g., "test-cluster" from "test-cluster有几台服务器")
+- intent_type: one of chat, query_info, query_metric, check_status, run_inspection, predict_risk, unknown
+- target_cluster: cluster name if explicitly mentioned
 - target_ip: server IP if explicitly mentioned
 - metric_name: metric name if mentioned (cpu, memory, disk, network, etc.)
 - time_range: time range if mentioned (1h, 24h, 7d, etc.)
-- confidence: confidence score 0-1
-- reasoning: brief explanation of why this intent was chosen
+- confidence: confidence score 0-1 (be conservative, use <0.7 for uncertain cases)
 
-IMPORTANT:
-- "有几台服务器" / "how many servers" / "多少台" -> query_info
-- "查看状态" / "check status" -> check_status
-- "查看指标" / "查看CPU" / "查看内存" -> query_metric
-- "运行巡检" / "执行检查" -> run_inspection
+Decision rules:
+- If user asks about agent identity/capabilities or greets -> chat (confidence 1.0)
+- If user asks about server count/config/info -> query_info
+- If user asks about CPU/memory/disk/network metrics -> query_metric
+- If user asks about status/health/check -> check_status
+- If user asks about running inspection/tasks -> run_inspection
+- If user asks about risk/prediction/future -> predict_risk
+- If user asks about general knowledge, technology definitions, or non-AIOPS topics ("XX是什么", "介绍一下XXX") -> unknown
+- If ambiguous or unclear -> unknown with confidence < 0.5
 
-Examples (note: Chinese input examples):
-- "test-cluster有几台服务器" -> {"intent_type": "query_info", "target_cluster": "test-cluster", "confidence": 0.95, "reasoning": "用户查询集群有多少台服务器"}
-- "查看 CPU 使用率" -> {"intent_type": "query_metric", "metric_name": "cpu_usage", "confidence": 0.9}
+Examples:
+- "你好" -> {"intent_type": "chat", "confidence": 1.0}
+- "你是谁" -> {"intent_type": "chat", "confidence": 1.0}
+- "test-cluster有几台服务器" -> {"intent_type": "query_info", "target_cluster": "test-cluster", "confidence": 0.95}
+- "查看 CPU 使用率" -> {"intent_type": "query_metric", "metric_name": "cpu", "confidence": 0.9}
 - "检查 192.168.1.1 状态" -> {"intent_type": "check_status", "target_ip": "192.168.1.1", "confidence": 0.95}
-- "运行巡检" -> {"intent_type": "run_inspection", "confidence": 0.8}"""
+- "运行巡检" -> {"intent_type": "run_inspection", "confidence": 0.85}
+- "磁盘会不会满" -> {"intent_type": "predict_risk", "metric_name": "disk", "confidence": 0.8}
+- "Starrocks是什么" -> {"intent_type": "unknown", "confidence": 0.6}
+- "Python是什么意思" -> {"intent_type": "unknown", "confidence": 0.6}"""
 
         try:
             response = await self._get_llm().ainvoke(
@@ -150,11 +160,29 @@ Examples (note: Chinese input examples):
             # Debug: log raw LLM response
             logger.info(f"LLM raw response: {response.content}")
 
-            # Extract JSON from response
-            json_match = re.search(r"\{.*\}", response.content, re.DOTALL)
-            if json_match:
-                parsed = json.loads(json_match.group())
-                logger.info(f"LLM parsed JSON: {parsed}")
+            # Extract JSON from response - try multiple approaches
+            parsed = None
+            # First try: find JSON block with intent_type
+            try:
+                json_match = re.search(r'\{[^}]+\}', response.content, re.DOTALL)
+                if json_match:
+                    parsed = json.loads(json_match.group())
+            except json.JSONDecodeError:
+                pass
+
+            # Second try: find first { and last } and try that
+            if parsed is None:
+                first_brace = response.content.find('{')
+                last_brace = response.content.rfind('}')
+                if first_brace != -1 and last_brace != -1:
+                    json_str = response.content[first_brace:last_brace+1]
+                    try:
+                        parsed = json.loads(json_str)
+                    except json.JSONDecodeError:
+                        pass
+
+            logger.info(f"LLM parsed JSON: {parsed}")
+            if parsed:
                 intent_type_str = parsed.get("intent_type", "unknown")
                 try:
                     intent_type = IntentType(intent_type_str)
@@ -191,11 +219,19 @@ Examples (note: Chinese input examples):
 
         missing = []
 
-        # Check required slots based on intent type
-        if intent.intent_type == IntentType.QUERY_INFO:
+        # CHAT intent needs no slots
+        if intent.intent_type == IntentType.CHAT:
+            pass  # No slots needed
+
+        elif intent.intent_type == IntentType.QUERY_INFO:
             # Query info needs either cluster or ip
             if not intent.target_cluster and not intent.target_ip:
-                missing.append("target")
+                # Try to get default cluster from cluster.json
+                clusters = self._env_manager.get_all_clusters()
+                if clusters:
+                    intent.target_cluster = clusters[0].cluster_name
+                else:
+                    missing.append("target")
 
         elif intent.intent_type == IntentType.QUERY_METRIC:
             if not intent.metric_name:
@@ -205,21 +241,35 @@ Examples (note: Chinese input examples):
                 clusters = self._env_manager.get_all_clusters()
                 if clusters:
                     intent.target_cluster = clusters[0].cluster_name
+                else:
+                    missing.append("target")
 
         elif intent.intent_type == IntentType.CHECK_STATUS:
-            if not intent.target_ip:
-                # Try to get servers from cluster
-                if intent.target_cluster:
-                    servers = self._env_manager.get_servers_by_cluster(intent.target_cluster)
-                    if servers:
-                        intent.target_ip = servers[0].ip
-                if not intent.target_ip:
-                    missing.append("target_ip")
+            if not intent.target_ip and not intent.target_cluster:
+                # Try to get default cluster
+                clusters = self._env_manager.get_all_clusters()
+                if clusters:
+                    intent.target_cluster = clusters[0].cluster_name
+                else:
+                    missing.append("target")
 
         elif intent.intent_type == IntentType.RUN_INSPECTION:
             # Need at least targets or cluster
             if not intent.target_cluster and not intent.target_ip:
-                missing.append("target")
+                clusters = self._env_manager.get_all_clusters()
+                if clusters:
+                    intent.target_cluster = clusters[0].cluster_name
+                else:
+                    missing.append("target")
+
+        elif intent.intent_type == IntentType.PREDICT_RISK:
+            # Need cluster or ip for prediction
+            if not intent.target_cluster and not intent.target_ip:
+                clusters = self._env_manager.get_all_clusters()
+                if clusters:
+                    intent.target_cluster = clusters[0].cluster_name
+                else:
+                    missing.append("target")
 
         state["missing_slots"] = missing
         return state
@@ -234,72 +284,104 @@ Examples (note: Chinese input examples):
 
         tools = []
 
-        # Select tools based on intent type
-        if intent.intent_type == IntentType.QUERY_INFO:
+        # Select tools based on intent type (aligned with docs)
+        if intent.intent_type == IntentType.CHAT:
+            # CHAT: no tools, direct LLM response
+            tools = []
+
+        elif intent.intent_type == IntentType.QUERY_INFO:
             tools.append("environment_query")
 
         elif intent.intent_type == IntentType.QUERY_METRIC:
+            # docs: ssh_command + prometheus_query
+            tools.append("ssh_command")
             tools.append("prometheus_query")
-            if intent.metric_name in ("cpu", "memory", "disk"):
-                tools.append("trend_prediction")
 
         elif intent.intent_type == IntentType.CHECK_STATUS:
+            # docs: ssh_command + log_analysis
             tools.append("ssh_command")
             tools.append("log_analysis")
 
         elif intent.intent_type == IntentType.RUN_INSPECTION:
+            # docs: ssh_command + log_analysis
             tools.append("ssh_command")
             tools.append("log_analysis")
-            tools.append("prometheus_query")
+
+        elif intent.intent_type == IntentType.PREDICT_RISK:
+            # docs: trend_prediction
+            tools.append("trend_prediction")
 
         state["confirmed_tools"] = tools
 
-        # Determine if confirmation is needed
-        # Confirm if confidence is low or missing slots exist
-        if intent.confidence < 0.7 or state.get("missing_slots"):
+        # Determine if confirmation is needed based on confidence
+        # ≥ 0.9: execute directly
+        # 0.7 - 0.9: confirm
+        # 0.5 - 0.7: multiple options
+        # < 0.5: fallback
+        confidence = intent.confidence if intent else 0.0
+        if confidence >= 0.9:
+            state["requires_confirmation"] = False
+        elif confidence >= 0.5:
+            state["requires_confirmation"] = True
+        else:
+            state["requires_confirmation"] = True  # Will trigger fallback
+
+        # Also confirm if missing slots
+        if state.get("missing_slots"):
             state["requires_confirmation"] = True
 
         return state
 
     async def _confirm(self, state: IntentAgentState) -> IntentAgentState:
-        """Confirm: Generate confirmation message for user."""
+        """Confirm: Generate confirmation message for user using templates."""
         logger.info("Intent Agent: confirm")
+
+        from src.agent import templates as T  # noqa: N814
 
         intent = state.get("intent")
         missing = state.get("missing_slots", [])
 
-        # Build confirmation message
+        # CHAT intent: direct greeting, no confirmation needed
+        if intent and intent.intent_type == IntentType.CHAT:
+            state["messages"] = [{"type": "chat", "content": T.CHAT_GREETING}]
+            return state
+
+        # Fallback: confidence < 0.5
+        if intent and intent.confidence < 0.5:
+            state["messages"] = [{"type": "fallback", "content": T.FALLBACK}]
+            return state
+
+        # Ask for missing information
         if missing:
-            # Ask for missing information
             questions = []
             if "metric_name" in missing:
-                questions.append("请问您想查看什么指标？(CPU、内存、磁盘、网络)")
+                questions.append(T.ASK_METRIC)
             if "target_ip" in missing or "target" in missing:
-                questions.append("请问您想检查哪台服务器？")
+                questions.append(T.ASK_TARGET)
             if "target_cluster" in missing:
-                questions.append("请问您想检查哪个集群？")
+                questions.append(T.ASK_CLUSTER)
 
             state["messages"] = [{"type": "ask", "content": " ".join(questions)}]
-        else:
-            # Confirm the action
-            intent = state.get("intent")
-            if intent:
-                confirm_msg = f"好的，我将"
-                if intent.intent_type == IntentType.QUERY_INFO:
-                    if intent.target_cluster:
-                        confirm_msg += f"查询集群 {intent.target_cluster} 的信息"
-                    elif intent.target_ip:
-                        confirm_msg += f"查询服务器 {intent.target_ip} 的信息"
-                elif intent.intent_type == IntentType.QUERY_METRIC:
-                    confirm_msg += f"查询 {intent.metric_name} 指标"
-                    if intent.time_range:
-                        confirm_msg += f"，时间范围 {intent.time_range}"
-                elif intent.intent_type == IntentType.CHECK_STATUS:
-                    confirm_msg += f"检查服务器 {intent.target_ip} 的状态"
-                elif intent.intent_type == IntentType.RUN_INSPECTION:
-                    confirm_msg += f"在 {intent.target_cluster or intent.target_ip} 运行巡检"
+            return state
 
-                confirm_msg += "。是否确认？"
+        # Build confirmation message using templates
+        if intent:
+            confirm_msg = ""
+            target = intent.target_cluster or intent.target_ip or ""
+
+            if intent.intent_type == IntentType.QUERY_INFO:
+                confirm_msg = T.CONFIRM_QUERY_INFO.format(target=target) if target else T.ASK_TARGET
+            elif intent.intent_type == IntentType.QUERY_METRIC:
+                metric = intent.metric_name or "未知"
+                confirm_msg = T.CONFIRM_QUERY_METRIC.format(cluster=target, metric=metric)
+            elif intent.intent_type == IntentType.CHECK_STATUS:
+                confirm_msg = T.CONFIRM_CHECK_STATUS.format(target=target)
+            elif intent.intent_type == IntentType.RUN_INSPECTION:
+                confirm_msg = T.CONFIRM_RUN_INSPECTION.format(target=target)
+            elif intent.intent_type == IntentType.PREDICT_RISK:
+                confirm_msg = T.CONFIRM_PREDICT_RISK.format(target=target)
+
+            if confirm_msg:
                 state["messages"] = [{"type": "confirm", "content": confirm_msg}]
 
         return state

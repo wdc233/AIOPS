@@ -20,10 +20,14 @@ class PrometheusQueryTool(BaseTool):
     name = "prometheus_query"
     description = "Query Prometheus metrics using PromQL. Returns time series data."
 
-    def __init__(self) -> None:
-        """Initialize Prometheus query tool."""
+    def __init__(self, url: Optional[str] = None) -> None:
+        """Initialize Prometheus query tool.
+
+        Args:
+            url: Optional Prometheus URL override. If not provided, uses config.
+        """
         self._settings = get_settings()
-        self._url = self._settings.prometheus.url
+        self._url = url or self._settings.prometheus.url
         self._timeout = self._settings.prometheus.timeout
 
     def _get_parameters_schema(self) -> Dict[str, Any]:
@@ -50,14 +54,14 @@ class PrometheusQueryTool(BaseTool):
     async def execute(
         self,
         query: str,
-        time: Optional[str] = None,
+        time_param: Optional[str] = None,
         step: Optional[str] = None,
     ) -> ToolResult:
         """Query Prometheus.
 
         Args:
             query: PromQL query
-            time: Time (unix timestamp or relative)
+            time_param: Time (unix timestamp or relative)
             step: Resolution step
 
         Returns:
@@ -68,8 +72,8 @@ class PrometheusQueryTool(BaseTool):
         try:
             params: Dict[str, str] = {"query": query}
 
-            if time:
-                params["time"] = time
+            if time_param:
+                params["time"] = time_param
             if step:
                 params["step"] = step
 

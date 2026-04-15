@@ -42,10 +42,12 @@ class SessionType(str, Enum):
 class IntentType(str, Enum):
     """User intent types."""
 
+    CHAT = "chat"
     QUERY_INFO = "query_info"
     QUERY_METRIC = "query_metric"
     CHECK_STATUS = "check_status"
     RUN_INSPECTION = "run_inspection"
+    PREDICT_RISK = "predict_risk"
     UNKNOWN = "unknown"
 
 
@@ -138,6 +140,7 @@ class ClusterInfo(BaseModel):
     cluster_type: str = Field(..., description="Cluster type: es, starrocks, cdh, gaussdb, tbds, etc.")
     env: str = Field(..., description="Environment: dev, sit, uat, prd")
     servers: List[ServerInfo] = Field(default_factory=list, description="Servers in this cluster")
+    prometheus_url: Optional[str] = Field(None, description="Prometheus server URL for this cluster")
 
 
 # --- Audit Models ---
