@@ -189,12 +189,32 @@ def _build_result_message(intent, result_data: Optional[Dict[str, Any]]) -> str:
     elif intent.intent_type == IntentType.PREDICT_RISK:
         if result_data:
             risk_level = result_data.get("risk_level", "unknown")
+            trend = result_data.get("trend", "stable")
+            horizon = result_data.get("horizon", "24h")
+            prediction_data = result_data.get("prediction_data", {})
+
+            # Build detailed prediction message
             if risk_level == "low":
-                return T.RESULT_PREDICT_RISK_LOW.format(target=target, horizon=result_data.get("horizon", "24h"))
+                msg = T.RESULT_PREDICT_RISK_LOW.format(target=target, horizon=horizon)
             elif risk_level == "medium":
-                return T.RESULT_PREDICT_RISK_MEDIUM.format(target=target, risk_type=result_data.get("risk_type", "指标"))
+                msg = T.RESULT_PREDICT_RISK_MEDIUM.format(target=target, risk_type=prediction_data.get("metric_name", "指标"))
             elif risk_level == "high":
-                return T.RESULT_PREDICT_RISK_HIGH.format(target=target, risk_type=result_data.get("risk_type", "指标"))
+                msg = T.RESULT_PREDICT_RISK_HIGH.format(target=target, risk_type=prediction_data.get("metric_name", "指标"))
+            elif risk_level == "critical":
+                msg = f"{target} 风险等级：严重！{prediction_data.get('metric_name', '指标')} 已超过阈值，建议立即处理！"
+            else:
+                msg = f"{target} 风险预测结果：{risk_level}"
+
+            # Add trend information if available
+            if trend and trend != "stable":
+                msg += f"\n趋势：{trend}（斜率: {prediction_data.get('slope', 0):.4f}）"
+
+            # Add statistics if available
+            stats = prediction_data.get("statistics", {})
+            if stats:
+                msg += f"\n统计：平均值={stats.get('average', 'N/A')}, 最大值={stats.get('max', 'N/A')}, 最小值={stats.get('min', 'N/A')}"
+
+            return msg
         return T.ERROR_QUERY_FAILED.format(reason="风险预测失败")
 
     return T.ERROR_EXECUTION_FAILED.format(reason="未知意图类型")
@@ -291,7 +311,43 @@ async def _execute_intent(service, intent) -> Optional[Dict[str, Any]]:
         return {"type": "inspection", "target": intent.target_ip or intent.target_cluster or "unknown"}
 
     elif intent.intent_type == IntentType.PREDICT_RISK:
-        # TODO: implement actual prediction
-        return {"type": "predict_risk", "target": intent.target_ip or intent.target_cluster or "unknown", "risk_level": "low", "horizon": "24h"}
+        # Actually run the prediction
+        from src.tools.trend import TrendPredictionTool
+
+        target = intent.target_ip or intent.target_cluster or "unknown"
+
+        # Get Prometheus URL from cluster if target is a cluster
+        prometheus_url = None
+        if intent.target_cluster:
+            cluster = env_manager.get_cluster(intent.target_cluster)
+            if cluster:
+                prometheus_url = cluster.prometheus_url
+
+        trend_tool = TrendPredictionTool(prometheus_url=prometheus_url)
+
+        # Default prediction for disk
+        metric_name = intent.metric_name or "disk_usage"
+
+        try:
+            result = await trend_tool.execute(
+                metric_name=metric_name,
+                target=target,
+                time_range="7d",
+                threshold=80.0,
+            )
+            if result and result.success:
+                data = result.data or {}
+                return {
+                    "type": "predict_risk",
+                    "target": target,
+                    "risk_level": data.get("risk_level", "low"),
+                    "trend": data.get("trend", "stable"),
+                    "horizon": "24h",
+                    "prediction_data": data,
+                }
+        except Exception as e:
+            logger.error(f"Prediction failed: {e}")
+
+        return {"type": "predict_risk", "target": target, "risk_level": "low", "horizon": "24h"}
 
     return None

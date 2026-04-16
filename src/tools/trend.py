@@ -21,10 +21,14 @@ class TrendPredictionTool(BaseTool):
     name = "trend_prediction"
     description = "Predict trend risks based on historical metric data using LLM or statistical models."
 
-    def __init__(self) -> None:
-        """Initialize trend prediction tool."""
+    def __init__(self, prometheus_url: Optional[str] = None) -> None:
+        """Initialize trend prediction tool.
+
+        Args:
+            prometheus_url: Optional Prometheus URL override.
+        """
         self._settings = get_settings()
-        self._prometheus = PrometheusQueryTool()
+        self._prometheus = PrometheusQueryTool(url=prometheus_url)
         self._llm = None
 
     def _get_llm(self):
@@ -90,7 +94,8 @@ class TrendPredictionTool(BaseTool):
 
         try:
             # Query historical data from Prometheus
-            query = f'{metric_name}{{instance="{target}"}}'
+            # Use regex to match all ports for the target IP
+            query = f'{metric_name}{{instance=~"{target}:.*"}}'
 
             # Use a longer time range for prediction
             result = await self._prometheus.query_range(
