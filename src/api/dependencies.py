@@ -28,6 +28,7 @@ class ChatSession:
     intent: Optional[UserIntent] = None
     history: list = field(default_factory=list)
     confirmed: bool = False
+    pending_metric_suggestion: Optional[Dict[str, Any]] = field(default=None)  # Store metric suggestion info when user needs to confirm
 
 
 class SessionManager:
@@ -50,6 +51,7 @@ class SessionManager:
         session_id: str,
         intent: Optional[UserIntent] = None,
         confirmed: bool = False,
+        pending_metric_suggestion: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Update session with new intent or confirmation."""
         async with self._lock:
@@ -58,6 +60,8 @@ class SessionManager:
                 if intent:
                     session.intent = intent
                 session.confirmed = confirmed
+                if pending_metric_suggestion is not None:
+                    session.pending_metric_suggestion = pending_metric_suggestion
                 session.updated_at = datetime.now()
 
     async def add_to_history(self, session_id: str, role: str, content: str) -> None:

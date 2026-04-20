@@ -32,6 +32,8 @@ CONFIRM_CHECK_STATUS = "好的，将检查 {target} 的状态。是否确认？"
 CONFIRM_RUN_INSPECTION = "好的，将在 {target} 执行巡检任务。是否确认？"
 CONFIRM_QUERY_INFO = "好的，将查询 {target} 的信息。是否确认？"
 CONFIRM_PREDICT_RISK = "好的，将预测 {target} 的风险。是否确认？"
+CONFIRM_PREDICT_RISK_SINGLE = "好的，将预测 {target} 的 {metric} 风险。是否确认？"
+CONFIRM_PREDICT_RISK_FULL = "好的，将对 {target} 进行全量风险预测分析。是否确认？"
 
 # Result templates (after execution)
 RESULT_INSPECT_OK = "集群 {cluster} 巡检完成，未发现问题。"
@@ -49,6 +51,7 @@ RESULT_PREDICT_RISK_HIGH = "{target} 风险等级：高！{risk_type} 可能不�
 
 # Ask templates (request missing information)
 ASK_CLUSTER = "请问您要操作的集群名称是？"
+ASK_CLUSTER_LIST = "请选择要操作的集群：\n{cluster_list}\n\n请输入集群名称或序号。"
 ASK_TARGET = "请问您要操作的目标是？（集群名称或服务器IP）"
 ASK_METRIC = "请问您想查询什么指标？（CPU、内存、磁盘、网络）"
 ASK_TIME_RANGE = "请问您想查询哪个时间范围？（1h、24h、7d）"
@@ -70,3 +73,6 @@ ERROR_NO_CLUSTER = "未找到指定的集群，请确认集群名称是否正确
 ERROR_NO_SERVER = "未找到指定的服务器，请确认IP地址是否正确。"
 ERROR_QUERY_FAILED = "查询失败：{reason}。请稍后重试。"
 ERROR_EXECUTION_FAILED = "执行失败：{reason}。请稍后重试。"
+ERROR_METRIC_NOT_FOUND = "未找到指标 '{metric}'，可能原因：\n1. 指标名称拼写错误\n2. 该指标在 Prometheus 中不存在\n\n可用指标包括：\n{available_metrics}\n\n您可以尝试：\n- 「预测 CPU」- CPU 使用率趋势\n- 「预测内存」- 内存使用率趋势\n- 「预测磁盘」- 磁盘使用率趋势"
+ERROR_SSH_FAILED = "通过 SSH 获取指标 '{metric}' 失败：{reason}\n请检查：\n1. 服务器网络是否可达\n2. SSH 认证是否正确"
+ERROR_METRIC_SUGGESTION = "指标 '{metric}' 不存在。是否改为预测以下相似指标？\n{similar_metrics}\n\n请回复 '是' 确认，或指定其他指标。"

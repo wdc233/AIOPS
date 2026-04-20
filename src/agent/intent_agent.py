@@ -236,11 +236,13 @@ Examples:
         elif intent.intent_type == IntentType.QUERY_METRIC:
             if not intent.metric_name:
                 missing.append("metric_name")
-            # Try to get default cluster if not specified
+            # Require explicit target selection (no auto-fill)
             if not intent.target_cluster and not intent.target_ip:
                 clusters = self._env_manager.get_all_clusters()
                 if clusters:
-                    intent.target_cluster = clusters[0].cluster_name
+                    # Store available clusters for later selection
+                    intent.available_clusters = [c.cluster_name for c in clusters]
+                    missing.append("target")
                 else:
                     missing.append("target")
 
@@ -357,7 +359,14 @@ Examples:
             if "metric_name" in missing:
                 questions.append(T.ASK_METRIC)
             if "target_ip" in missing or "target" in missing:
-                questions.append(T.ASK_TARGET)
+                # Check if we have available clusters to list
+                if intent and hasattr(intent, 'available_clusters') and intent.available_clusters:
+                    cluster_list = "\n".join([
+                        f"{i+1}. {name}" for i, name in enumerate(intent.available_clusters)
+                    ])
+                    questions.append(T.ASK_CLUSTER_LIST.format(cluster_list=cluster_list))
+                else:
+                    questions.append(T.ASK_TARGET)
             if "target_cluster" in missing:
                 questions.append(T.ASK_CLUSTER)
 
@@ -379,7 +388,11 @@ Examples:
             elif intent.intent_type == IntentType.RUN_INSPECTION:
                 confirm_msg = T.CONFIRM_RUN_INSPECTION.format(target=target)
             elif intent.intent_type == IntentType.PREDICT_RISK:
-                confirm_msg = T.CONFIRM_PREDICT_RISK.format(target=target)
+                if intent.metric_name:
+                    metric = intent.metric_name
+                    confirm_msg = T.CONFIRM_PREDICT_RISK_SINGLE.format(target=target, metric=metric)
+                else:
+                    confirm_msg = T.CONFIRM_PREDICT_RISK_FULL.format(target=target)
 
             if confirm_msg:
                 state["messages"] = [{"type": "confirm", "content": confirm_msg}]

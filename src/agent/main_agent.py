@@ -13,6 +13,7 @@ from langgraph.graph import END, StateGraph
 
 from src.bus.lane_lock import get_lane_lock
 from src.config import get_settings
+from src.config.constants import SSH_COMMANDS
 from src.models.types import InspectionCommand, InspectionItem, ToolResult
 from src.tools import get_all_tools
 
@@ -131,13 +132,8 @@ class MainAgent:
                 if prometheus_url:
                     break
 
-        # SSH system commands
-        ssh_commands = {
-            "cpu": "top -bn1 | grep 'Cpu(s)' | awk '{print $2}' | cut -d'%' -f1",
-            "memory": "free -m | awk 'NR==2{printf \"%.2f\", $3*100/$2 }'",
-            "disk": "df -h | awk '$NF==\"/\"{print $5}' | cut -d'%' -f1",
-            "network": "cat /proc/net/dev | awk 'NR>2{sum+=$10} END{print sum/1024/1024}'",
-        }
+        # SSH system commands (imported from constants)
+        ssh_commands = SSH_COMMANDS
 
         # Collect observations for each inspection item
         for item in inspection_items:
