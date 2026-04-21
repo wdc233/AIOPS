@@ -18,8 +18,8 @@ python src/main.py --api-port 8080
 # Run tests
 pytest tests/ -v
 
-# Run a single test
-pytest tests/test_specific.py::test_name -v
+# Run tests excluding integration tests
+pytest tests/ -v --ignore=tests/test_chat.py --ignore=tests/test_intent.py
 
 # Type checking
 mypy src/
@@ -29,17 +29,34 @@ black src/
 ruff check src/
 ```
 
-## FastAPI REST API
+## Project Structure
 
-AIOPS exposes REST APIs via FastAPI for external integrations (e.g., frontend).
-
-### Configuration
-
-API settings in `.env` or environment variables:
-```bash
-API__HOST=0.0.0.0
-API__PORT=8000
 ```
+src/
+├── agent/
+│   ├── main_agent.py           # Main Agent (LangGraph StateGraph)
+│   ├── intent_agent.py         # Intent Recognition Agent
+│   ├── single_metric_inspector.py  # Single metric inspection with LLM
+│   └── templates.py            # Response templates
+├── api/
+│   ├── routes/
+│   │   ├── chat.py            # /api/v1/chat endpoint
+│   │   ├── inspection.py       # /api/v1/inspection/run
+│   │   └── prediction.py      # /api/v1/prediction/risk
+│   ├── schemas.py             # Pydantic request/response models
+│   └── dependencies.py         # DI (APIService, SessionManager)
+├── config/
+│   ├── settings.py            # Pydantic Settings
+│   └── constants.py           # BASIC_METRICS, SSH_COMMANDS
+├── tools/
+│   ├── ssh.py                 # SSHCommandTool
+│   ├── prometheus.py          # PrometheusQueryTool
+│   ├── trend.py               # TrendPredictionTool
+│   └── ...
+└── main.py                   # Entry point
+```
+
+## FastAPI REST API
 
 ### API Endpoints
 
@@ -48,12 +65,6 @@ API__PORT=8000
 | POST | `/api/v1/chat` | User dialogue with multi-round conversation |
 | POST | `/api/v1/inspection/run` | Trigger immediate inspection |
 | POST | `/api/v1/prediction/risk` | Get trend-based risk prediction |
-
-### API Input Patterns
-
-- **Inspection/Prediction Targets**: Support cluster name, server IPs, or Prometheus metric URL
-- **Target Resolution**: If no IP specified, query environment info table to get IP list
-- **Metric Resolution**: Query all metrics for target if none specified; return error if metric not found in Prometheus
 
 ### WebSocket Coexistence
 
@@ -82,16 +93,16 @@ FastAPI runs in the same process as the existing agent. Uvicorn starts in a subt
 
 - **Main Agent**: LangGraph StateGraph with nodes: observe → analyze → predict → decide → act → report
 - **Intent Recognition Agent**: Independent StateGraph with nodes: intent_parse → slot_check → tool_select → confirm
-- **Memory**: ConversationBufferMemory for user sessions, inspection tasks use isolated sessions
 
 ### Intent Recognition System
 
 **Intent Types**:
 - `CHAT`: User greetings/identity questions - direct LLM response, no tool call
-- `INSPECT_CLUSTER`: Cluster inspection - tools: ssh_command + log_analysis
-- `QUERY_METRIC`: Metric query - tools: ssh_command + prometheus_query
-- `PREDICT_RISK`: Risk prediction - tools: trend_prediction
 - `QUERY_INFO`: Cluster/server info query - tools: environment_query
+- `QUERY_METRIC`: **Single metric inspection with LLM analysis** - tools: ssh_command / prometheus_query + LLM
+- `CHECK_STATUS`: Server status check - tools: ssh_command + log_analysis
+- `RUN_INSPECTION`: Full cluster inspection - tools: ssh_command + log_analysis + prometheus_query
+- `PREDICT_RISK`: **Risk prediction** (single or full metrics) - tools: trend_prediction
 
 **Confidence-Based Execution**:
 - ≥ 0.9: Execute directly without confirmation
@@ -99,34 +110,52 @@ FastAPI runs in the same process as the existing agent. Uvicorn starts in a subt
 - 0.5 - 0.7: Present multiple intent options for user selection
 - < 0.5: Fallback response with suggestions
 
-**Strategy Templates**:
-- Response templates are pre-defined in configuration (not LLM-generated)
+**Slot Filling**:
+- User input → cluster.json lookup → follow-up question
+- When target not specified: shows ASK_CLUSTER_LIST with all available clusters for user to select
+- When metric not found: shows similar metric suggestions
+
+**Strategy Templates** (in `src/agent/templates.py`):
+- Pre-defined response templates (not LLM-generated)
 - Each intent type has corresponding template for confirmation and result messages
-- Slot filling follows: user input → cluster.json lookup → follow-up question
 
 **Fallback Response**:
 - "我好像没有理解您的需求。您可以尝试这样说：'检查 prod-cluster 的健康状况'、'查看 CPU 使用率' 或 '预测磁盘容量风险'。"
 
-## Required Tools
+## Tools
 
-- `SSHCommandTool`: Execute commands on remote servers
-- `LogAnalysisTool`: Analyze log files with regex and anomaly detection
-- `PrometheusQueryTool`: Query Prometheus metrics with PromQL
-- `GrafanaQueryTool`: Query Grafana dashboards and data sources
-- `TrendPredictionTool`: Predict trend risks using LLM or statistical models
-- `AlertWebhookTool`: Call existing webhook URLs for alerts
-- `EnvironmentQueryTool`: Query global environment info, cluster/server metadata
+| Tool | File | Description |
+|------|------|-------------|
+| `SSHCommandTool` | `src/tools/ssh.py` | Execute commands via SSH |
+| `LogAnalysisTool` | `src/tools/log_analysis.py` | Log analysis with regex |
+| `PrometheusQueryTool` | `src/tools/prometheus.py` | Query Prometheus metrics |
+| `GrafanaQueryTool` | `src/tools/grafana.py` | Query Grafana dashboards |
+| `TrendPredictionTool` | `src/tools/trend.py` | Trend prediction (stats + LLM) |
+| `AlertWebhookTool` | `src/tools/alert.py` | Send alerts via webhook |
+| `EnvironmentQueryTool` | `src/tools/env_query.py` | Query cluster/server info |
+| `SingleMetricInspector` | `src/agent/single_metric_inspector.py` | Single metric + LLM analysis |
 
 ## Data Models
 
-Key Pydantic models defined in requirements:
+Key Pydantic models in `src/api/schemas.py` and `src/models/types.py`:
 - `InspectionCommand`: Inspection task command with schedule/run_now/cancel/update actions
 - `UserIntent`: User interaction intent with slot filling (target_cluster, target_ip, metric_name, etc.)
-- `ClusterInfo`: Global environment information (cluster_name, cluster_type, env, servers)
+- `ClusterInfo`: Global environment information (cluster_name, cluster_type, env, servers, prometheus_url)
 - `ServerInfo`: Server information (ip, port, username, password, cluster_name)
-- `AuditLog`: Full链路 operation records
 
-**Note**: cluster_type and env are flexible strings (es, starrocks, cdh, gaussdb, tbds for cluster_type; dev, sit, uat, prd for env). ServerInfo no longer contains role/labels/os_type/private_key.
+## Constants
+
+**Basic Metrics** (`src/config/constants.py`):
+```python
+BASIC_METRICS = ["cpu", "memory", "disk", "network"]
+
+SSH_COMMANDS = {
+    "cpu": "top -bn1 | grep 'Cpu(s)' | awk '{print $2}' | cut -d'%' -f1",
+    "memory": "free -m | awk 'NR==2{printf \"%.2f\", $3*100/$2 }'",
+    "disk": "df -h | awk '$NF==\"/\"{print $5}' | cut -d'%' -f1",
+    "network": "cat /proc/net/dev | awk 'NR>2{sum+=$10} END{print sum/1024/1024}'",
+}
+```
 
 ## Technical Requirements
 
@@ -147,9 +176,14 @@ Key Pydantic models defined in requirements:
 
 ## Docker
 
-Project should include:
-- `Dockerfile`: Agent container image
-- `docker-compose.yml`: Includes StarRocks service
+- `Dockerfile`: Agent container image (python:3.11-slim)
+- `docker-compose.yml`: Includes StarRocks, Prometheus, Grafana services
+
+## Deployment
+
+- **Online**: `pip install -r requirements.txt && python src/main.py`
+- **Offline**: `python run_offline.py` (extracts whl files to temp dir, no pip needed)
+- See `README_OFFLINE.md` for detailed offline deployment guide
 
 ## References
 
